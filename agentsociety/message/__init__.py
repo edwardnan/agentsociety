@@ -1,6 +1,6 @@
 from .message_interceptor import (MessageBlockBase, MessageBlockListenerBase,
                                   MessageInterceptor)
-from .messager import Messager
+from .messager import LocalMessager, Messager
 
 __all__ = [
     "Messager",

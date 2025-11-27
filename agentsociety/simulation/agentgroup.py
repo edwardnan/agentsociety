@@ -19,7 +19,7 @@ from ..configs import SimConfig
 from ..environment import EconomyClient, Simulator
 from ..llm.llm import LLM
 from ..memory import FaissQuery, Memory
-from ..message import Messager
+from ..message import LocalMessager, Messager
 from ..metrics import MlflowClient
 from ..utils import (DIALOG_SCHEMA, INSTITUTION_STATUS_SCHEMA, PROFILE_SCHEMA,
                      STATUS_SCHEMA, SURVEY_SCHEMA)
@@ -121,15 +121,21 @@ class AgentGroup:
 
         # prepare Messager
         mqtt_config = config.prop_mqtt
-        if mqtt_config is not None:
+        if mqtt_config is None or getattr(mqtt_config, "mode", "mqtt") == "local":
+            log_path = None
+            if mqtt_config is not None:
+                log_path = mqtt_config.local_path
+            self.messager = LocalMessager.remote(log_path=log_path)
+            logger.warning(
+                "MQTT broker not configured or offline mode selected; using local JSONL messager."
+            )
+        else:
             self.messager = Messager.remote(
                 hostname=mqtt_config.server,  # type:ignore
                 port=mqtt_config.port,
                 username=mqtt_config.username,
                 password=mqtt_config.password,
             )
-        else:
-            self.messager = None
 
         self.message_dispatch_task = None
         self._pgsql_writer = pgsql_writer

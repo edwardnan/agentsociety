@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import time
+from pathlib import Path
 from typing import Any, Optional, Union
 
 import ray
@@ -9,9 +10,25 @@ from aiomqtt import Client
 
 __all__ = [
     "Messager",
+    "LocalMessager",
 ]
 
 logger = logging.getLogger("agentsociety")
+
+
+def _dump_log(log_list, log_path: Optional[Path]):
+    """Persist log entries to a JSONL file if a path is provided."""
+
+    if log_path is None or not log_list:
+        return
+    try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as f:
+            for item in log_list:
+                f.write(json.dumps(item, default=str))
+                f.write("\n")
+    except Exception as exc:  # noqa: BLE001 - surface raw file errors
+        logger.warning("Failed to write offline message log: %s", exc)
 
 
 @ray.remote
@@ -251,4 +268,118 @@ class Messager:
         assert self.receive_messages_task is not None
         self.receive_messages_task.cancel()
         await asyncio.gather(self.receive_messages_task, return_exceptions=True)
+        await self.disconnect()
+
+
+@ray.remote
+class LocalMessager:
+    """A lightweight message bus for environments without MQTT access.
+
+    Messages are queued locally for subscribers and optionally persisted to a
+    JSONL file so users still get a trace of inter-agent communication.
+    """
+
+    def __init__(
+        self,
+        log_path: Optional[str] = None,
+        message_interceptor: Optional[ray.ObjectRef] = None,
+    ):
+        self.connected = False
+        self.message_queue = asyncio.Queue()
+        self.receive_messages_task = None
+        self._message_interceptor = message_interceptor
+        self._log_list = []
+        self._log_path = Path(log_path) if log_path else None
+        self._subscriptions: set[str] = set()
+
+    @property
+    def message_interceptor(self) -> Union[None, ray.ObjectRef]:
+        return self._message_interceptor
+
+    def get_log_list(self):
+        return self._log_list
+
+    def clear_log_list(self):
+        _dump_log(self._log_list, self._log_path)
+        self._log_list = []
+
+    def set_message_interceptor(self, message_interceptor: ray.ObjectRef):
+        self._message_interceptor = message_interceptor
+
+    async def __aexit__(self, exc_type, exc_value, traceback):
+        await self.stop()
+
+    async def ping(self):
+        return "pong"
+
+    async def connect(self):
+        self.connected = True
+        logger.info("Local messager ready (no external broker).")
+
+    async def disconnect(self):
+        self.connected = False
+
+    async def is_connected(self):
+        return self.connected
+
+    async def subscribe(self, topics: Any, agents: Any):  # noqa: ARG002 - parity with MQTT messager
+        if not isinstance(topics, list):
+            topics = [topics]
+        self._subscriptions.update(topics)
+
+    async def receive_messages(self):
+        while self.connected:
+            await asyncio.sleep(0.05)
+
+    async def fetch_messages(self):
+        messages = []
+        while not self.message_queue.empty():
+            messages.append(await self.message_queue.get())
+        return messages
+
+    async def send_message(
+        self,
+        topic: str,
+        payload: dict,
+        from_uuid: Optional[str] = None,
+        to_uuid: Optional[str] = None,
+    ):
+        start_time = time.time()
+        message = json.dumps(payload, default=str)
+        interceptor = self.message_interceptor
+        is_valid: bool = True
+        if interceptor is not None and (from_uuid is not None and to_uuid is not None):
+            is_valid = await interceptor.forward.remote(  # type:ignore
+                from_uuid, to_uuid, message
+            )
+        log = {
+            "topic": topic,
+            "payload": payload,
+            "from_uuid": from_uuid,
+            "to_uuid": to_uuid,
+            "start_time": start_time,
+            "consumption": 0,
+            "delivered": False,
+        }
+        if is_valid:
+            await self.message_queue.put(
+                type("LocalMessage", (), {"topic": topic, "payload": message})
+            )
+            log["delivered"] = True
+            logger.info("Local message queued for %s: %s", topic, message)
+        else:
+            logger.info("Local message dropped by interceptor for %s: %s", topic, message)
+        log["consumption"] = time.time() - start_time
+        self._log_list.append(log)
+
+    async def start_listening(self):
+        if await self.is_connected():
+            self.receive_messages_task = asyncio.create_task(self.receive_messages())
+        else:
+            logger.error("Cannot start listening because local messager is not connected.")
+
+    async def stop(self):
+        if self.receive_messages_task is not None:
+            self.receive_messages_task.cancel()
+            await asyncio.gather(self.receive_messages_task, return_exceptions=True)
         await self.disconnect()
