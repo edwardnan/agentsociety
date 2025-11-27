@@ -30,6 +30,13 @@ class MQTTConfig(BaseModel):
     port: int = Field(..., description="Port number for MQTT connection")
     password: Optional[str] = Field(None, description="Password for MQTT connection")
     username: Optional[str] = Field(None, description="Username for MQTT connection")
+    mode: str = Field(
+        "mqtt",
+        description="Transport mode: 'mqtt' for broker, 'local' for JSONL fallback",
+    )
+    local_path: Optional[str] = Field(
+        None, description="Where to store offline JSONL logs when mode=local"
+    )
 
     @classmethod
     def create(
@@ -38,8 +45,17 @@ class MQTTConfig(BaseModel):
         port: int,
         username: Optional[str] = None,
         password: Optional[str] = None,
+        mode: str = "mqtt",
+        local_path: Optional[str] = None,
     ) -> "MQTTConfig":
-        return cls(server=server, username=username, port=port, password=password)
+        return cls(
+            server=server,
+            username=username,
+            port=port,
+            password=password,
+            mode=mode,
+            local_path=local_path,
+        )
 
 
 class SimulatorRequestConfig(BaseModel):
@@ -207,8 +223,10 @@ class SimConfig(BaseModel):
         port: int,
         username: Optional[str] = None,
         password: Optional[str] = None,
+        mode: str = "mqtt",
+        local_path: Optional[str] = None,
     ) -> "SimConfig":
-        self.mqtt = MQTTConfig.create(server, port, username, password)
+        self.mqtt = MQTTConfig.create(server, port, username, password, mode, local_path)
         return self
 
     def SetMapRequest(self, file_path: str) -> "SimConfig":

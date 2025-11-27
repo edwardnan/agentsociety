@@ -67,6 +67,29 @@ Python >= 3.9
 pip install agentsociety
 ```
 
+### One-command bootstrap (maps + config)
+
+If you are new to the project and only have an LLM API key, run the helper to
+download the Beijing map and generate ready-to-use configs that point to the
+Docker services in `docker/`:
+
+```bash
+python scripts/bootstrap_quickstart.py --llm-api-key YOUR_KEY
+# or run without --llm-api-key to enter it interactively
+```
+
+This creates `quickstart/sim_config.yaml`, `quickstart/exp_config.yaml`, and
+`quickstart/ui_config.yaml`, and saves the map to `data/beijing_map.pb`. The
+script will then ask whether to start the Docker services and launch a one-day
+quickstart run immediately (you can also force it with `--run` or skip the
+prompt with `--no-run-prompt`). If you prefer to run services yourself, pass
+`--skip-docker-start`.
+
+No Docker? Use `--offline` to generate configs that avoid MQTT/PostgreSQL/MLflow
+entirely. The simulation will fall back to a local JSONL message bus (written to
+`--offline-log-path`) so you can still observe traffic without external
+services.
+
 <a id="quickstart"></a>
 ## 🚀 QuickStart
 

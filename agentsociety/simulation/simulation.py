@@ -27,7 +27,7 @@ from ..cityagent.message_intercept import (EdgeMessageBlock,
 from ..configs import ExpConfig, SimConfig
 from ..environment import EconomyClient, Simulator
 from ..llm import SimpleEmbedding
-from ..message import (MessageBlockBase, MessageBlockListenerBase,
+from ..message import (LocalMessager, MessageBlockBase, MessageBlockListenerBase,
                        MessageInterceptor, Messager)
 from ..metrics import init_mlflow_connection
 from ..metrics.mlflow_client import MlflowClient
@@ -135,12 +135,21 @@ class AgentSimulation:
         # self._last_asyncio_pg_task = None  # hide SQL write IO to calculation task
 
         mqtt_config = config.prop_mqtt
-        self._messager = Messager.remote(
-            hostname=mqtt_config.server,  # type:ignore
-            port=mqtt_config.port,
-            username=mqtt_config.username,
-            password=mqtt_config.password,
-        )
+        if mqtt_config is None or getattr(mqtt_config, "mode", "mqtt") == "local":
+            log_path = None
+            if mqtt_config is not None:
+                log_path = mqtt_config.local_path
+            self._messager = LocalMessager.remote(log_path=log_path)
+            logger.warning(
+                "MQTT broker not configured or offline mode selected; using local JSONL messager."
+            )
+        else:
+            self._messager = Messager.remote(
+                hostname=mqtt_config.server,  # type:ignore
+                port=mqtt_config.port,
+                username=mqtt_config.username,
+                password=mqtt_config.password,
+            )
 
         # storage
 
